@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taipei Metro OCC - 台北捷運行車控制中心</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        metro: {
+                            bg: '#080c14',
+                            card: '#0f172a',
+                            border: '#1e293b',
+                            red: '#e60012',
+                            blue: '#0070bd',
+                            green: '#008659',
+                            orange: '#f8931d',
+                            brown: '#c48c31',
+                            cyan: '#00f3ff',
+                            amber: '#ffaa00',
+                            alarm: '#ff0055'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+                        sans: ['Inter', 'Microsoft JhengHei', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Inter:wght@300;400;600;700&display=swap');
+
+        body {
+            background-color: #060911;
+            color: #e2e8f0;
+            font-family: 'Inter', 'Microsoft JhengHei', sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* Scanline Overlay */
+        .scanline-bg {
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.25) 50%
+            ), linear-gradient(
+                90deg,
+                rgba(255, 0, 0, 0.03),
+                rgba(0, 255, 0, 0.01),
+                rgba(0, 0, 255, 0.03)
+            );
+            background-size: 100% 3px, 6px 100%;
+            pointer-events: none;
+        }
+
+        /* Glassmorphism Panel */
+        .occ-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(51, 65, 85, 0.6);
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+        }
+
+        .occ-panel:hover {
+            border-color: rgba(0, 243, 255, 0.3);
+        }
+
+        /* Glowing Text & Borders */
+        .glow-cyan { text-shadow: 0 0 8px rgba(0, 243, 255, 0.6); }
+        .glow-red { text-shadow: 0 0 8px rgba(255, 0, 85, 0.6); }
+        .glow-amber { text-shadow: 0 0 8px rgba(255, 170, 0, 0.6); }
+        .glow-green { text-shadow: 0 0 8px rgba(0, 255, 102, 0.6); }
+
+        .border-glow-cyan { box-shadow: 0 0 10px rgba(0, 243, 255, 0.3); }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #080c14;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 2px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00f3ff;
+        }
+
+        /* CCTV Scanlines Effect */
+        .cctv-feed {
+            position: relative;
+            overflow: hidden;
+        }
+        .cctv-feed::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: rgba(18, 16, 16, 0) linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Marquee Animation */
+        @keyframes marquee {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-marquee {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee 35s linear infinite;
+        }
+
+        /* Pulse Blinking Effect */
+        .blink-fast {
+            animation: blinker 0.8s cubic-bezier(0.5, 0, 1, 1) infinite alternate;
+        }
+        @keyframes blinker {
+            from { opacity: 1.0; }
+            to { opacity: 0.2; }
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col justify-between overflow-hidden text-xs select-none">
+    
+    <header class="bg-slate-900/90 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between shrink-0 z-20">
+        <!-- Brand & Logo -->
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg border border-cyan-400/30">
+                <i class="fa-solid fa-train-subway text-base"></i>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <h1 class="font-bold text-base tracking-wider text-slate-100 font-mono">TRTC - OCC METRO CONTROL</h1>
+                    <span class="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-500/40 text-cyan-400 text-[10px] font-mono">SYSTEM ONLINE</span>
+                </div>
+                <p class="text-[10px] text-slate-400">台北捷運 中央行車控制中心 (中央監控圖檔層)</p>
+            </div>
+        </div>
+
+        <!-- KPI Readouts -->
+        <div class="hidden lg:flex items-center space-x-6 font-mono">
+            <!-- Active Trains -->
+            <div class="bg-slate-950/60 px-3 py-1 rounded border border-slate-800/80">
+                <span class="text-slate-400 text-[10px] block">營運列車 ACTIVE</span>
+                <span class="text-cyan-400 font-bold text-sm" id="kpi-active-trains">148 列車</span>
+            </div>
+            <!-- On-Time Rate -->
+            <div class="bg-slate-950/60 px-3 py-1 rounded border border-slate-800/80">
+                <span class="text-slate-400 text-[10px] block">準點率 ON-TIME</span>
+                <span class="text-emerald-400 font-bold text-sm" id="kpi-ontime-rate">99.84 %</span>
+            </div>
+            <!-- Grid Voltage -->
+            <div class="bg-slate-950/60 px-3 py-1 rounded border border-slate-800/80">
+                <span class="text-slate-400 text-[10px] block">牽引電壓 750V DC</span>
+                <span class="text-amber-400 font-bold text-sm" id="kpi-voltage">748.2 V</span>
+            </div>
+            <!-- Passenger Flow -->
+            <div class="bg-slate-950/60 px-3 py-1 rounded border border-slate-800/80">
+                <span class="text-slate-400 text-[10px] block">即時運量 PASSENGERS/H</span>
+                <span class="text-blue-400 font-bold text-sm" id="kpi-pax">142,850 人</span>
+            </div>
+        </div>
+
+        <!-- Clock & Controls -->
+        <div class="flex items-center space-x-4">
+            <button onclick="triggerEmergencyAlert()" class="px-3 py-1.5 rounded bg-red-950 hover:bg-red-900 border border-red-600/50 text-red-200 font-semibold text-xs flex items-center space-x-1.5 transition-all shadow-lg active:scale-95">
+                <i class="fa-solid fa-triangle-exclamation text-red-400 blink-fast"></i>
+                <span>模擬突發告警</span>
+            </button>
+
+            <div class="text-right font-mono">
+                <div class="text-sm font-bold text-cyan-300 glow-cyan" id="live-clock">10:52:49</div>
+                <div class="text-[10px] text-slate-400" id="live-date">2026-09-24 THU</div>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 grid grid-cols-12 gap-2 p-2 min-h-0 overflow-hidden bg-slate-950/50">
+
+        <!-- ZONE 1: MIMIC DISPLAY / ATS TRACK MAP (Center / Left Main - 7 Cols) -->
+        <section class="col-span-12 lg:col-span-7 flex flex-col occ-panel rounded-lg overflow-hidden relative">
+            <div class="px-3 py-1.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-network-wired text-cyan-400"></i>
+                    <h2 class="font-bold text-slate-200 font-mono">01. 捷運全線軌道動態圖 (ATS Mimic Display)</h2>
+                </div>
+                <!-- Line Legend Badges -->
+                <div class="flex items-center space-x-2 text-[10px] font-mono">
+                    <span class="px-1.5 py-0.5 rounded bg-red-600/20 border border-red-500 text-red-400">R 淡水信義</span>
+                    <span class="px-1.5 py-0.5 rounded bg-blue-600/20 border border-blue-500 text-blue-400">BL 板南</span>
+                    <span class="px-1.5 py-0.5 rounded bg-emerald-600/20 border border-emerald-500 text-emerald-400">G 松山新店</span>
+                    <span class="px-1.5 py-0.5 rounded bg-amber-600/20 border border-amber-500 text-amber-400">O 中和新蘆</span>
+                    <span class="px-1.5 py-0.5 rounded bg-yellow-700/20 border border-yellow-600 text-amber-200">BR 文湖</span>
+                </div>
+            </div>
+
+            <!-- Canvas Container -->
+            <div class="flex-1 relative bg-slate-950/90 overflow-hidden" id="mimic-container">
+                <canvas id="mimicCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+
+                <!-- Floating Canvas Overlay Controls -->
+                <div class="absolute bottom-2 left-2 bg-slate-900/80 border border-slate-700/50 backdrop-blur rounded p-1.5 flex space-x-2 text-[10px] font-mono">
+                    <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span><span class="text-slate-300">正常</span></span>
+                    <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span><span class="text-slate-300">減速</span></span>
+                    <span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span><span class="text-slate-300">佔用/警報</span></span>
+                </div>
+
+                <div class="absolute top-2 right-2 text-right font-mono text-[10px] bg-slate-900/70 p-2 rounded border border-slate-800 text-slate-400">
+                    <div>地圖模式: <span class="text-cyan-400">北捷路網拓撲圖</span></div>
+                    <div>即時號誌區間: <span class="text-emerald-400">AUTO BLOCK</span></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT SIDE CONTAINER (5 Cols) -->
+        <div class="col-span-12 lg:col-span-5 grid grid-rows-3 gap-2 min-h-0">
+
+            <section class="occ-panel rounded-lg flex flex-col overflow-hidden">
+                <div class="px-3 py-1 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-bolt text-amber-400"></i>
+                        <h2 class="font-bold text-slate-200 font-mono">02. SCADA 電力與機電設備監控</h2>
+                    </div>
+                    <span class="text-[10px] font-mono text-emerald-400">主變電所 (SS1-SS8) 通電中</span>
+                </div>
+
+                <div class="p-2 flex-1 grid grid-cols-2 gap-2 text-[11px] font-mono">
+                    <!-- High Voltage Power Grid SLD -->
+                    <div class="bg-slate-950/80 rounded border border-slate-800 p-2 flex flex-col justify-between">
+                        <div class="text-[10px] text-slate-400 border-b border-slate-800 pb-1 flex justify-between">
+                            <span>主饋線路圖 (750V DC)</span>
+                            <span class="text-cyan-400">NORMAL</span>
+                        </div>
+                        <div class="space-y-1.5 my-1">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-300">SS-11 北車變電站</span>
+                                <span class="px-1 bg-emerald-950 border border-emerald-500 text-emerald-300 rounded text-[9px]">752V / 1200A</span>
+                            </div>
+                            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                <div class="bg-emerald-500 h-full w-[82%] animate-pulse"></div>
+                            </div>
+
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-300">SS-23 忠孝復興站</span>
+                                <span class="px-1 bg-emerald-950 border border-emerald-500 text-emerald-300 rounded text-[9px]">749V / 1450A</span>
+                            </div>
+                            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                <div class="bg-cyan-500 h-full w-[78%]"></div>
+                            </div>
+                        </div>
+                        <div class="text-[9px] text-slate-400 flex justify-between pt-1 border-t border-slate-800">
+                            <span>第三軌供電: <span class="text-emerald-400">CLOSED</span></span>
+                            <span>斷路器: <span class="text-emerald-400">ON</span></span>
+                        </div>
+                    </div>
+
+                    <!-- Station Facility Toggles & Gauges -->
+                    <div class="bg-slate-950/80 rounded border border-slate-800 p-2 flex flex-col justify-between">
+                        <div class="text-[10px] text-slate-400 border-b border-slate-800 pb-1">站體關鍵設備 status</div>
+                        <div class="grid grid-cols-2 gap-1.5 my-auto">
+                            <div class="bg-slate-900 p-1.5 rounded border border-slate-800 flex items-center justify-between">
+                                <div><i class="fa-solid fa-fan text-cyan-400 mr-1"></i>HVAC 通風</div>
+                                <span class="text-emerald-400 font-bold">100%</span>
+                            </div>
+                            <div class="bg-slate-900 p-1.5 rounded border border-slate-800 flex items-center justify-between">
+                                <div><i class="fa-solid fa-water text-blue-400 mr-1"></i>抽水泵浦</div>
+                                <span class="text-emerald-400 font-bold">AUTO</span>
+                            </div>
+                            <div class="bg-slate-900 p-1.5 rounded border border-slate-800 flex items-center justify-between">
+                                <div><i class="fa-solid fa-stairs text-amber-400 mr-1"></i>電扶梯</div>
+                                <span class="text-emerald-400 font-bold">RUN</span>
+                            </div>
+                            <div class="bg-slate-900 p-1.5 rounded border border-slate-800 flex items-center justify-between">
+                                <div><i class="fa-solid fa-door-closed text-purple-400 mr-1"></i>月台門PSD</div>
+                                <span class="text-emerald-400 font-bold">LOCK</span>
+                            </div>
+                        </div>
+                        <div class="text-[9px] text-slate-400 flex justify-between pt-1 border-t border-slate-800">
+                            <span>環境風速: 1.2 m/s</span>
+                            <span>排水井水位: Normal</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="occ-panel rounded-lg flex flex-col overflow-hidden">
+                <div class="px-3 py-1 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-video text-red-400"></i>
+                        <h2 class="font-bold text-slate-200 font-mono">03. CCTV 站體與車廂影像監視矩陣</h2>
+                    </div>
+                    <span class="text-[10px] font-mono text-cyan-400" id="cctv-status">LIVE MATRIX (4/4)</span>
+                </div>
+
+                <div class="p-1.5 flex-1 grid grid-cols-2 gap-1.5 bg-slate-950">
+                    <!-- CCTV 1: Platform -->
+                    <div id="cctv-card-1" class="cctv-feed rounded border border-slate-800 bg-slate-900 relative overflow-hidden flex flex-col justify-between p-1.5 transition-all">
+                        <div class="flex justify-between items-center text-[9px] font-mono z-10 bg-slate-950/70 px-1 rounded">
+                            <span class="text-cyan-300"><i class="fa-solid fa-camera mr-1"></i>CAM-01 [R10 台北車站月台]</span>
+                            <span class="text-red-400 font-bold">● REC</span>
+                        </div>
+                        <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
+                            <i class="fa-solid fa-users text-4xl text-slate-500"></i>
+                        </div>
+                        <div class="z-10 text-[9px] font-mono text-slate-400 flex justify-between">
+                            <span>AI 人潮密度: 42%</span>
+                            <span>10:52:49</span>
+                        </div>
+                    </div>
+
+                    <!-- CCTV 2: Concourse -->
+                    <div class="cctv-feed rounded border border-slate-800 bg-slate-900 relative overflow-hidden flex flex-col justify-between p-1.5">
+                        <div class="flex justify-between items-center text-[9px] font-mono z-10 bg-slate-950/70 px-1 rounded">
+                            <span class="text-cyan-300"><i class="fa-solid fa-camera mr-1"></i>CAM-02 [BL15 忠孝復興穿堂]</span>
+                            <span class="text-red-400 font-bold">● REC</span>
+                        </div>
+                        <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
+                            <i class="fa-solid fa-door-open text-4xl text-slate-500"></i>
+                        </div>
+                        <div class="z-10 text-[9px] font-mono text-slate-400 flex justify-between">
+                            <span>閘門狀況: 正常</span>
+                            <span>10:52:49</span>
+                        </div>
+                    </div>
+
+                    <!-- CCTV 3: Train Interior -->
+                    <div class="cctv-feed rounded border border-slate-800 bg-slate-900 relative overflow-hidden flex flex-col justify-between p-1.5">
+                        <div class="flex justify-between items-center text-[9px] font-mono z-10 bg-slate-950/70 px-1 rounded">
+                            <span class="text-cyan-300"><i class="fa-solid fa-camera mr-1"></i>CAM-03 [車頭-T102 車廂內]</span>
+                            <span class="text-red-400 font-bold">● REC</span>
+                        </div>
+                        <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
+                            <i class="fa-solid fa-train text-4xl text-slate-500"></i>
+                        </div>
+                        <div class="z-10 text-[9px] font-mono text-slate-400 flex justify-between">
+                            <span>駕駛室駕駛監視</span>
+                            <span>10:52:49</span>
+                        </div>
+                    </div>
+
+                    <!-- CCTV 4: Escalator Area -->
+                    <div class="cctv-feed rounded border border-slate-800 bg-slate-900 relative overflow-hidden flex flex-col justify-between p-1.5">
+                        <div class="flex justify-between items-center text-[9px] font-mono z-10 bg-slate-950/70 px-1 rounded">
+                            <span class="text-cyan-300"><i class="fa-solid fa-camera mr-1"></i>CAM-04 [G12 中山站轉乘通道]</span>
+                            <span class="text-red-400 font-bold">● REC</span>
+                        </div>
+                        <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
+                            <i class="fa-solid fa-stairs text-4xl text-slate-500"></i>
+                        </div>
+                        <div class="z-10 text-[9px] font-mono text-slate-400 flex justify-between">
+                            <span>扶梯紅外線防夾: OK</span>
+                            <span>10:52:49</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="occ-panel rounded-lg flex flex-col overflow-hidden">
+                <div class="px-3 py-1 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-chart-line text-emerald-400"></i>
+                        <h2 class="font-bold text-slate-200 font-mono">04. 列車運行曲線圖與誤點監測</h2>
+                    </div>
+                    <span class="text-[10px] font-mono text-slate-400">實時與預定時刻比對</span>
+                </div>
+
+                <div class="p-2 flex-1 grid grid-cols-12 gap-2 bg-slate-950/90">
+                    <!-- Graph Canvas -->
+                    <div class="col-span-7 h-full relative">
+                        <canvas id="timetableCanvas" class="w-full h-full block rounded border border-slate-800 bg-slate-950"></canvas>
+                    </div>
+
+                    <!-- Live Board & Delays -->
+                    <div class="col-span-5 flex flex-col justify-between font-mono text-[10px] space-y-1">
+                        <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+                            <div class="text-slate-400 border-b border-slate-800 pb-0.5">即時進站預告 NEXT ARRIVAL</div>
+                            <div class="mt-1 space-y-1">
+                                <div class="flex justify-between">
+                                    <span class="text-red-400">R10 台北車站</span>
+                                    <span class="text-slate-200">102號車</span>
+                                    <span class="text-cyan-400 font-bold" id="countdown-1">00:24s</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-blue-400">BL12 板橋站</span>
+                                    <span class="text-slate-200">205號車</span>
+                                    <span class="text-cyan-400 font-bold" id="countdown-2">01:10s</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900 p-1.5 rounded border border-slate-800">
+                            <div class="text-slate-400 border-b border-slate-800 pb-0.5">異常誤點監測 DELAY TRACKING</div>
+                            <div class="mt-1 space-y-1" id="delay-list">
+                                <div class="flex justify-between">
+                                    <span class="text-slate-300">TR-102 (淡水)</span>
+                                    <span class="text-emerald-400">+0s (准點)</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-slate-300">TR-204 (頂埔)</span>
+                                    <span class="text-amber-400">+18s (微遲)</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-slate-300">TR-311 (新店)</span>
+                                    <span class="text-emerald-400">+4s (准點)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <section class="col-span-12 occ-panel rounded-lg flex flex-col overflow-hidden h-36">
+            <div class="px-3 py-1 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between shrink-0">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-headset text-purple-400"></i>
+                    <h2 class="font-bold text-slate-200 font-mono">05. 無線電調度通訊與系統即時告警日誌 (Comms & Alarm Panel)</h2>
+                </div>
+                <span class="text-[10px] font-mono text-cyan-400">AUTO SCROLL LOGS</span>
+            </div>
+
+            <div class="flex-1 grid grid-cols-12 gap-2 p-2 bg-slate-950/90 overflow-hidden font-mono">
+                <!-- Radio Comms visualizer -->
+                <div class="col-span-12 lg:col-span-4 bg-slate-900/80 rounded border border-slate-800 p-2 flex flex-col justify-between">
+                    <div class="text-[10px] text-slate-400 flex justify-between border-b border-slate-800 pb-1">
+                        <span>無線電頻道 RADIO CHANNELS</span>
+                        <span class="text-emerald-400">CH-01 ACTIVE</span>
+                    </div>
+
+                    <div class="space-y-1.5 my-1">
+                        <div class="flex items-center justify-between text-[10px]">
+                            <span class="text-slate-300"><i class="fa-solid fa-walkie-talkie mr-1 text-cyan-400"></i>行控調度席 (OCC Direct)</span>
+                            <span class="px-1 bg-emerald-950 text-emerald-400 border border-emerald-500 rounded text-[9px]">通話中</span>
+                        </div>
+                        <!-- Audio Spectrum Animation -->
+                        <div class="flex items-end space-x-1 h-6 bg-slate-950 p-1 rounded border border-slate-800/80 justify-between" id="audio-wave">
+                            <!-- JS dynamically generates waveform bars -->
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800">
+                        <span>頻道: 淡水線調度一</span>
+                        <span>訊號強度: -68 dBm</span>
+                    </div>
+                </div>
+
+                <!-- Live Auto-scrolling Alarm Log -->
+                <div class="col-span-12 lg:col-span-8 bg-slate-950 rounded border border-slate-800 p-1.5 overflow-y-auto" id="alarm-log-box">
+                    <div class="space-y-1" id="alarm-log-list">
+                        <!-- Alarm Items Populated via JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-slate-900 border-t border-slate-800 px-4 py-1 flex items-center shrink-0 font-mono text-[11px]">
+        <div class="px-2 py-0.5 rounded bg-red-950 border border-red-500 text-red-400 font-bold shrink-0 mr-3 flex items-center space-x-1">
+            <i class="fa-solid fa-bullhorn text-xs"></i>
+            <span>OCC 通告 MARQUEE</span>
+        </div>
+        <div class="flex-1 overflow-hidden relative">
+            <div class="animate-marquee text-slate-300">
+                [行控中心系統通告] 全線列車運作正常。台北車站、忠孝復興站轉乘人潮平穩。即時號誌系統 ATS 自動閉塞迴路運作良好。預計今日全天運量將達 210 萬人次。請各站站務員保持轉乘通道順暢。
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        /* ==========================================================================
+           01. REAL-TIME CLOCK & KPI UPDATE ENGINE
+           ========================================================================== */
+        function updateClock() {
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0];
+            const dateStr = now.toISOString().split('T')[0] + ' ' + ['SUN','MON','TUE','WED','THU','FRI','SAT'][now.getDay()];
+            
+            document.getElementById('live-clock').innerText = timeStr;
+            document.getElementById('live-date').innerText = dateStr;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Fluctuating KPI values for realistic OCC effect
+        setInterval(() => {
+            document.getElementById('kpi-voltage').innerText = (747 + Math.random() * 3).toFixed(1) + ' V';
+            document.getElementById('kpi-pax').innerText = (142800 + Math.floor(Math.random() * 120)).toLocaleString() + ' 人';
+        }, 2500);
+
+        /* ==========================================================================
+           02. MIMIC DISPLAY CANVAS ENGINE (Taipei Metro TRTC Track Map & Dynamic Trains)
+           ========================================================================== */
+        const canvas = document.getElementById('mimicCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('mimic-container');
+
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // TRTC Station Nodes & Polyline Topology
+        const lines = {
+            red: {
+                color: '#e60012',
+                name: '淡水信義線 (R)',
+                path: [
+                    { name: '淡水 R28', x: 0.15, y: 0.12 },
+                    { name: '北投 R22', x: 0.25, y: 0.22 },
+                    { name: '圓山 R14', x: 0.38, y: 0.38 },
+                    { name: '中山 R11', x: 0.38, y: 0.50 },
+                    { name: '台北車站 R10', x: 0.38, y: 0.62 },
+                    { name: '大安 R05', x: 0.58, y: 0.62 },
+                    { name: '象山 R02', x: 0.75, y: 0.62 }
+                ]
+            },
+            blue: {
+                color: '#0070bd',
+                name: '板南線 (BL)',
+                path: [
+                    { name: '頂埔 BL01', x: 0.10, y: 0.82 },
+                    { name: '板橋 BL07', x: 0.22, y: 0.72 },
+                    { name: '西門 BL11', x: 0.32, y: 0.62 },
+                    { name: '台北車站 BL12', x: 0.38, y: 0.62 },
+                    { name: '忠孝復興 BL15', x: 0.52, y: 0.62 },
+                    { name: '南港展覽館 BL23', x: 0.85, y: 0.42 }
+                ]
+            },
+            green: {
+                color: '#008659',
+                name: '松山新店線 (G)',
+                path: [
+                    { name: '松山 G19', x: 0.78, y: 0.32 },
+                    { name: '南京復興 G16', x: 0.52, y: 0.50 },
+                    { name: '中山 G14', x: 0.38, y: 0.50 },
+                    { name: '西門 G12', x: 0.32, y: 0.62 },
+                    { name: '中正紀念堂 G10', x: 0.38, y: 0.74 },
+                    { name: '新店 G01', x: 0.55, y: 0.90 }
+                ]
+            },
+            orange: {
+                color: '#f8931d',
+                name: '中和新蘆線 (O)',
+                path: [
+                    { name: '蘆洲 O54', x: 0.20, y: 0.28 },
+                    { name: '民權西路 O11', x: 0.38, y: 0.42 },
+                    { name: '忠孝新生 O07', x: 0.52, y: 0.68 },
+                    { name: '古亭 O05', x: 0.45, y: 0.80 },
+                    { name: '南勢角 O01', x: 0.45, y: 0.92 }
+                ]
+            },
+            brown: {
+                color: '#c48c31',
+                name: '文湖線 (BR)',
+                path: [
+                    { name: '南港展覽館 BR24', x: 0.85, y: 0.42 },
+                    { name: '大直 BR14', x: 0.60, y: 0.25 },
+                    { name: '南京復興 BR11', x: 0.52, y: 0.50 },
+                    { name: '忠孝復興 BR10', x: 0.52, y: 0.62 },
+                    { name: '動物園 BR01', x: 0.72, y: 0.85 }
+                ]
+            }
+        };
+
+        // Active Trains State Array
+        const activeTrains = [
+            { id: 'T101', line: 'red', progress: 0.1, speed: 0.0008, dir: 1 },
+            { id: 'T102', line: 'red', progress: 0.6, speed: 0.0006, dir: -1 },
+            { id: 'T204', line: 'blue', progress: 0.3, speed: 0.0009, dir: 1 },
+            { id: 'T205', line: 'blue', progress: 0.85, speed: 0.0007, dir: -1 },
+            { id: 'T308', line: 'green', progress: 0.4, speed: 0.0005, dir: 1 },
+            { id: 'T402', line: 'orange', progress: 0.55, speed: 0.0008, dir: -1 },
+            { id: 'T501', line: 'brown', progress: 0.2, speed: 0.0010, dir: 1 }
+        ];
+
+        function drawMimicMap() {
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            // Draw Background Grid Lines for HUD Aesthetic
+            ctx.strokeStyle = 'rgba(30, 41, 59, 0.4)';
+            ctx.lineWidth = 1;
+            const gridSize = 40;
+            for (let x = 0; x < w; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+                ctx.stroke();
+            }
+            for (let y = 0; y < h; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+            }
+
+            // Draw Metro Lines & Track Blocks
+            Object.keys(lines).forEach(key => {
+                const line = lines[key];
+                const path = line.path;
+
+                // Track Line Glow
+                ctx.beginPath();
+                ctx.strokeStyle = line.color;
+                ctx.lineWidth = 4;
+                ctx.shadowColor = line.color;
+                ctx.shadowBlur = 8;
+
+                path.forEach((pt, i) => {
+                    const px = pt.x * w;
+                    const py = pt.y * h;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                });
+                ctx.stroke();
+                ctx.shadowBlur = 0; // Reset Shadow
+
+                // Draw Stations
+                path.forEach(pt => {
+                    const px = pt.x * w;
+                    const py = pt.y * h;
+
+                    // Station Outer Dot
+                    ctx.beginPath();
+                    ctx.arc(px, py, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#0f172a';
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Station Label
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.font = '10px JetBrains Mono';
+                    ctx.fillText(pt.name, px + 8, py + 3);
+                });
+            });
+
+            // Draw Dynamic Active Trains
+            activeTrains.forEach(train => {
+                const linePath = lines[train.line].path;
+                
+                // Update Progress
+                train.progress += train.speed * train.dir;
+                if (train.progress >= 1 || train.progress <= 0) {
+                    train.dir *= -1; // Reverse direction
+                }
+
+                // Interpolate Coordinates along multi-segment line
+                const totalSegments = linePath.length - 1;
+                const scaledProg = train.progress * totalSegments;
+                const segIdx = Math.min(Math.floor(scaledProg), totalSegments - 1);
+                const segFrac = scaledProg - segIdx;
+
+                const p1 = linePath[segIdx];
+                const p2 = linePath[segIdx + 1];
+
+                const tx = (p1.x + (p2.x - p1.x) * segFrac) * w;
+                const ty = (p1.y + (p2.y - p1.y) * segFrac) * h;
+
+                // Draw Train Marker
+                ctx.shadowColor = '#00f3ff';
+                ctx.shadowBlur = 10;
+                ctx.fillStyle = '#00f3ff';
+                ctx.fillRect(tx - 5, ty - 5, 10, 10);
+                ctx.shadowBlur = 0;
+
+                // Train Badge Label
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 9px JetBrains Mono';
+                ctx.fillText(train.id, tx - 12, ty - 8);
+            });
+
+            requestAnimationFrame(drawMimicMap);
+        }
+
+        drawMimicMap();
+
+        /* ==========================================================================
+           03. TIMETABLE TRAJECTORY CANVAS (Zone 4 Curve Graph)
+           ========================================================================== */
+        const ttCanvas = document.getElementById('timetableCanvas');
+        const ttCtx = ttCanvas.getContext('2d');
+
+        function renderTimetableGraph() {
+            const w = ttCanvas.width = ttCanvas.parentElement.clientWidth;
+            const h = ttCanvas.height = ttCanvas.parentElement.clientHeight;
+
+            ttCtx.clearRect(0, 0, w, h);
+
+            // Axes
+            ttCtx.strokeStyle = '#334155';
+            ttCtx.lineWidth = 1;
+            ttCtx.beginPath();
+            ttCtx.moveTo(25, 10);
+            ttCtx.lineTo(25, h - 20);
+            ttCtx.lineTo(w - 10, h - 20);
+            ttCtx.stroke();
+
+            // Station labels on Y-axis
+            ttCtx.fillStyle = '#64748b';
+            ttCtx.font = '9px JetBrains Mono';
+            ttCtx.fillText('淡水', 2, 20);
+            ttCtx.fillText('北車', 2, h / 2);
+            ttCtx.fillText('象山', 2, h - 25);
+
+            // Draw Theoretical Trajectory Line (Dashed Green)
+            ttCtx.beginPath();
+            ttCtx.setLineDash([4, 4]);
+            ttCtx.strokeStyle = '#10b981';
+            ttCtx.moveTo(25, 20);
+            ttCtx.lineTo(w / 2, h / 2);
+            ttCtx.lineTo(w - 20, h - 25);
+            ttCtx.stroke();
+            ttCtx.setLineDash([]); // Reset Dash
+
+            // Draw Actual Trajectory Line (Solid Cyan)
+            ttCtx.beginPath();
+            ttCtx.strokeStyle = '#00f3ff';
+            ttCtx.lineWidth = 2;
+            ttCtx.moveTo(25, 20);
+            ttCtx.lineTo(w / 2 + 5, h / 2 - 2); // Slight fluctuation
+            ttCtx.lineTo(w - 40, h - 45);
+            ttCtx.stroke();
+        }
+
+        setTimeout(renderTimetableGraph, 500);
+        window.addEventListener('resize', renderTimetableGraph);
+
+        /* ==========================================================================
+           04. AUDIO WAVE VISUALIZER & COUNTDOWNS
+           ========================================================================== */
+        const audioWaveContainer = document.getElementById('audio-wave');
+        for (let i = 0; i < 20; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'w-1 bg-cyan-400 rounded-t transition-all duration-150';
+            bar.style.height = Math.floor(Math.random() * 80 + 20) + '%';
+            audioWaveContainer.appendChild(bar);
+        }
+
+        setInterval(() => {
+            Array.from(audioWaveContainer.children).forEach(bar => {
+                bar.style.height = Math.floor(Math.random() * 85 + 15) + '%';
+            });
+        }, 150);
+
+        // Countdown Timers Update
+        let cd1 = 24, cd2 = 70;
+        setInterval(() => {
+            cd1 = cd1 > 0 ? cd1 - 1 : 45;
+            cd2 = cd2 > 0 ? cd2 - 1 : 90;
+
+            document.getElementById('countdown-1').innerText = `00:${cd1 < 10 ? '0' + cd1 : cd1}s`;
+            document.getElementById('countdown-2').innerText = `01:${cd2 < 10 ? '0' + cd2 : cd2}s`;
+        }, 1000);
+
+        /* ==========================================================================
+           05. AUTO-SCROLLING ALARM LOG SYSTEM
+           ========================================================================== */
+        const alarmLogList = document.getElementById('alarm-log-list');
+        const sampleLogs = [
+            { type: 'INFO', text: 'R10 台北車站月台門 (PSD) 正常閉鎖循環完成', color: 'text-cyan-400', bg: 'bg-cyan-950/40' },
+            { type: 'WARN', text: 'BL12 板橋站電扶梯 E-03 流量負載率達 88%', color: 'text-amber-400', bg: 'bg-amber-950/40' },
+            { type: 'INFO', text: 'SS-04 變電站電壓穩定於 750.4V DC', color: 'text-emerald-400', bg: 'bg-emerald-950/40' },
+            { type: 'ALARM', text: 'TR-204 號列車區間閉塞號誌變更為黃燈 (減速規避)', color: 'text-red-400', bg: 'bg-red-950/40' }
+        ];
+
+        function addAlarmLog(type, text, customColor, customBg) {
+            const time = new Date().toTimeString().split(' ')[0];
+            const item = document.createElement('div');
+            item.className = `p-1 rounded ${customBg || 'bg-slate-900'} border border-slate-800 text-[10px] flex items-center justify-between font-mono animate-fade-in`;
+            
+            item.innerHTML = `
+                <div class="flex items-center space-x-2">
+                    <span class="px-1 rounded bg-slate-950 ${customColor || 'text-cyan-400'} font-bold border border-slate-700">${type}</span>
+                    <span class="text-slate-300">${text}</span>
+                </div>
+                <span class="text-slate-500">${time}</span>
+            `;
+
+            alarmLogList.insertBefore(item, alarmLogList.firstChild);
+
+            if (alarmLogList.children.length > 20) {
+                alarmLogList.removeChild(alarmLogList.lastChild);
+            }
+        }
+
+        // Periodically inject simulated logs
+        setInterval(() => {
+            const rand = sampleLogs[Math.floor(Math.random() * sampleLogs.length)];
+            addAlarmLog(rand.type, rand.text, rand.color, rand.bg);
+        }, 4000);
+
+        /* ==========================================================================
+           06. EMERGENCY ALERT SIMULATION TRIGGER
+           ========================================================================== */
+        function triggerEmergencyAlert() {
+            // Flash CCTV Card
+            const cctvCard = document.getElementById('cctv-card-1');
+            cctvCard.classList.add('border-red-500', 'border-2', 'ring-4', 'ring-red-500/50');
+
+            // Log Emergency
+            addAlarmLog('CRITICAL', '⚠️ 警告: [R10 台北車站] 月台緊急按鈕 (EOB) 模擬觸發!', 'text-red-500', 'bg-red-900/60');
+
+            // Flash Status Text
+            const cctvStatus = document.getElementById('cctv-status');
+            const origText = cctvStatus.innerText;
+            cctvStatus.innerText = '🚨 ALARM TRIGGERED';
+            cctvStatus.className = 'text-[10px] font-mono text-red-500 blink-fast font-bold';
+
+            // Reset after 6 seconds
+            setTimeout(() => {
+                cctvCard.classList.remove('border-red-500', 'border-2', 'ring-4', 'ring-red-500/50');
+                cctvStatus.innerText = origText;
+                cctvStatus.className = 'text-[10px] font-mono text-cyan-400';
+            }, 6000);
+        }
+    </script>
+</body>
+</html>
